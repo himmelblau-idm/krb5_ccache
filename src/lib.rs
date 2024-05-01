@@ -1,9 +1,44 @@
 pub mod error;
 use crate::error::CCacheError;
 use compact_jwt::crypto::MsOapxbcSessionKey;
-use picky_asn1::wrapper::{Asn1SequenceOf, GeneralStringAsn1};
+use compact_jwt::jwe::Jwe;
+use compact_jwt::JweCompact;
+use kanidm_hsm_crypto::{BoxedDynTpm, MsOapxbcRsaKey};
+use picky_asn1::wrapper::GeneralStringAsn1;
 use picky_krb::messages::AsRep;
 use std::convert::Into;
+use std::str::FromStr;
+
+struct SessionKey {
+    session_key_jwe: JweCompact,
+}
+
+impl SessionKey {
+    fn new(session_key_jwe: &str) -> Result<Self, CCacheError> {
+        Ok(SessionKey {
+            session_key_jwe: JweCompact::from_str(session_key_jwe)
+                .map_err(|e| CCacheError::InvalidParse(format!("Failed parsing jwe: {}", e)))?,
+        })
+    }
+
+    fn decipher(
+        &self,
+        tpm: &mut BoxedDynTpm,
+        transport_key: &MsOapxbcRsaKey,
+        data: &[u8],
+    ) -> Result<Jwe, CCacheError> {
+        let session_key = MsOapxbcSessionKey::complete_tpm_rsa_oaep_key_agreement(
+            tpm,
+            transport_key,
+            &self.session_key_jwe,
+        )
+        .map_err(|e| {
+            CCacheError::CryptoFail(format!("Unable to decipher session_key_jwe: {}", e))
+        })?;
+        // TODO: There is no decipher function for plain bytes yet on MsOapxbcSessionKey!
+        Err(CCacheError::NotImplemented)
+    }
+}
 
 struct Header {
     tag: u16,
@@ -74,11 +109,9 @@ struct CCache {
 }
 
 impl CCache {
-    pub fn from_tgt(tgt: &[u8], session_key: MsOapxbcSessionKey) -> Result<CCache, CCacheError> {
+    pub fn from_tgt(tgt: &[u8], session_key: SessionKey) -> Result<CCache, CCacheError> {
         let tgt: AsRep = picky_asn1_der::from_bytes(tgt)
-            .map_err(|e| {
-                CCacheError::CryptoFail(format!("AsRep decode fail: {:?}", e))
-            })?;
+            .map_err(|e| CCacheError::CryptoFail(format!("AsRep decode fail: {:?}", e)))?;
         let header = Header {
             tag: 1,
             tagdata: vec![0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00],

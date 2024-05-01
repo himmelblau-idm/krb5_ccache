@@ -4,6 +4,8 @@ pub enum CCacheError {
     CryptoFail(String),
     /// Error encountered during formating
     FormatError(String),
+    /// Failed to parse something
+    InvalidParse(String),
     /// This functionality is not yet implemented
     NotImplemented,
 }
