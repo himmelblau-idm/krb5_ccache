@@ -74,7 +74,11 @@ struct CCache {
 }
 
 impl CCache {
-    pub fn from_tgt(tgt: AsRep, session_key: MsOapxbcSessionKey) -> Result<CCache, CCacheError> {
+    pub fn from_tgt(tgt: &[u8], session_key: MsOapxbcSessionKey) -> Result<CCache, CCacheError> {
+        let tgt: AsRep = picky_asn1_der::from_bytes(tgt)
+            .map_err(|e| {
+                CCacheError::CryptoFail(format!("AsRep decode fail: {:?}", e))
+            })?;
         let header = Header {
             tag: 1,
             tagdata: vec![0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00],

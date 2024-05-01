@@ -13,4 +13,5 @@ repository = "https://github.com/himmelblau-idm/krb5_ccache"
 [dependencies]
 compact_jwt = { version = "0.4.1", features = ["msextensions"] }
 picky-asn1 = "0.8.0"
+picky-asn1-der = "0.4.1"
 picky-krb = "0.8.0"
