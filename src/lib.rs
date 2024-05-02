@@ -225,6 +225,11 @@ impl CCache {
             second_ticket: CountedOctetString { data: vec![] },
         };
 
-        Err(CCacheError::NotImplemented)
+        Ok(CCache {
+            file_format_version: 0x0504,
+            headers: vec![header],
+            primary_principal: principal,
+            credentials: vec![credential],
+        })
     }
 }
