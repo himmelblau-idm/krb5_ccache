@@ -1,13 +1,36 @@
 pub mod error;
 use crate::error::CCacheError;
 use compact_jwt::crypto::MsOapxbcSessionKey;
-use compact_jwt::jwe::Jwe;
 use compact_jwt::JweCompact;
 use kanidm_hsm_crypto::{BoxedDynTpm, MsOapxbcRsaKey};
-use picky_asn1::wrapper::GeneralStringAsn1;
+use picky_asn1::wrapper::{GeneralStringAsn1, IntegerAsn1};
 use picky_krb::messages::{AsRep, EncAsRepPart};
-use std::convert::Into;
+use std::convert::{Into, From, TryFrom};
 use std::str::FromStr;
+
+struct Asn1Int<'a>(&'a IntegerAsn1);
+impl<'a> TryFrom<Asn1Int<'a>> for u16 {
+    type Error = CCacheError;
+
+    fn try_from(i: Asn1Int) -> Result<Self, Self::Error> {
+        Ok(u16::from_be_bytes(
+            i.0.as_unsigned_bytes_be()[0..2]
+                .try_into()
+                .map_err(|e| CCacheError::FormatError(format!("{:?}", e)))?,
+        ))
+    }
+}
+impl<'a> TryFrom<Asn1Int<'a>> for u32 {
+    type Error = CCacheError;
+
+    fn try_from(i: Asn1Int) -> Result<Self, Self::Error> {
+        Ok(u32::from_be_bytes(
+            i.0.as_unsigned_bytes_be()[0..4]
+                .try_into()
+                .map_err(|e| CCacheError::FormatError(format!("{:?}", e)))?,
+        ))
+    }
+}
 
 struct SessionKey<'a> {
     session_key_jwe: JweCompact,
@@ -57,6 +80,13 @@ impl Into<CountedOctetString> for GeneralStringAsn1 {
         CountedOctetString {
             data: self.as_bytes().to_vec(),
         }
+    }
+}
+
+struct Asn1StrList(Vec<GeneralStringAsn1>);
+impl From<Asn1StrList> for Vec<CountedOctetString> {
+    fn from(i: Asn1StrList) -> Vec<CountedOctetString> {
+        i.0.iter().map(|i| (*i).clone().into()).collect()
     }
 }
 
@@ -121,22 +151,9 @@ impl CCache {
         };
 
         let principal = Principal {
-            name_type: u32::from_be_bytes(
-                tgt.0.cname.name_type.0.as_unsigned_bytes_be()[0..4]
-                    .try_into()
-                    .map_err(|e| CCacheError::FormatError(format!("{:?}", e)))?,
-            ),
+            name_type: Asn1Int(&tgt.0.cname.name_type.0).try_into()?,
             realm: tgt.0.crealm.0.into(),
-            components: tgt
-                .0
-                .cname
-                .0
-                .name_string
-                .0
-                .to_vec()
-                .iter()
-                .map(|i| (*i).clone().into())
-                .collect(),
+            components: Asn1StrList(tgt.0.cname.0.name_string.0.to_vec()).into(),
         };
 
         let cipher_text = tgt.0.enc_part.0.cipher.to_vec();
