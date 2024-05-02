@@ -5,31 +5,34 @@ use compact_jwt::jwe::Jwe;
 use compact_jwt::JweCompact;
 use kanidm_hsm_crypto::{BoxedDynTpm, MsOapxbcRsaKey};
 use picky_asn1::wrapper::GeneralStringAsn1;
-use picky_krb::messages::AsRep;
+use picky_krb::messages::{AsRep, EncAsRepPart};
 use std::convert::Into;
 use std::str::FromStr;
 
-struct SessionKey {
+struct SessionKey<'a> {
     session_key_jwe: JweCompact,
+    tpm: &'a mut BoxedDynTpm,
+    transport_key: &'a MsOapxbcRsaKey,
 }
 
-impl SessionKey {
-    fn new(session_key_jwe: &str) -> Result<Self, CCacheError> {
+impl<'a> SessionKey<'a> {
+    fn new(
+        session_key_jwe: &str,
+        tpm: &'a mut BoxedDynTpm,
+        transport_key: &'a MsOapxbcRsaKey,
+    ) -> Result<Self, CCacheError> {
         Ok(SessionKey {
             session_key_jwe: JweCompact::from_str(session_key_jwe)
                 .map_err(|e| CCacheError::InvalidParse(format!("Failed parsing jwe: {}", e)))?,
+            tpm,
+            transport_key,
         })
     }
 
-    fn decipher(
-        &self,
-        tpm: &mut BoxedDynTpm,
-        transport_key: &MsOapxbcRsaKey,
-        data: &[u8],
-    ) -> Result<Jwe, CCacheError> {
+    fn decipher(&mut self, data: &[u8]) -> Result<Vec<u8>, CCacheError> {
         let session_key = MsOapxbcSessionKey::complete_tpm_rsa_oaep_key_agreement(
-            tpm,
-            transport_key,
+            self.tpm,
+            self.transport_key,
             &self.session_key_jwe,
         )
         .map_err(|e| {
@@ -109,7 +112,7 @@ struct CCache {
 }
 
 impl CCache {
-    pub fn from_tgt(tgt: &[u8], session_key: SessionKey) -> Result<CCache, CCacheError> {
+    pub fn from_tgt(tgt: &[u8], mut session_key: SessionKey) -> Result<CCache, CCacheError> {
         let tgt: AsRep = picky_asn1_der::from_bytes(tgt)
             .map_err(|e| CCacheError::CryptoFail(format!("AsRep decode fail: {:?}", e)))?;
         let header = Header {
@@ -135,6 +138,11 @@ impl CCache {
                 .map(|i| (*i).clone().into())
                 .collect(),
         };
+
+        let cipher_text = tgt.0.enc_part.0.cipher.to_vec();
+        let plain_text = session_key.decipher(&cipher_text)?;
+        let enc_part: EncAsRepPart = picky_asn1_der::from_bytes(&plain_text)
+            .map_err(|e| CCacheError::CryptoFail(format!("EncAsRepPart decode fail: {:?}", e)))?;
 
         Err(CCacheError::NotImplemented)
     }
