@@ -34,35 +34,30 @@ impl<'a> TryFrom<Asn1Int<'a>> for u32 {
     }
 }
 
-struct SessionKey<'a> {
-    session_key_jwe: JweCompact,
-    tpm: &'a mut BoxedDynTpm,
-    transport_key: &'a MsOapxbcRsaKey,
+struct SessionKey {
+    session_key: MsOapxbcSessionKey,
 }
 
-impl<'a> SessionKey<'a> {
+impl SessionKey {
     pub fn new(
         session_key_jwe: &str,
-        tpm: &'a mut BoxedDynTpm,
-        transport_key: &'a MsOapxbcRsaKey,
+        tpm: &mut BoxedDynTpm,
+        transport_key: &MsOapxbcRsaKey,
     ) -> Result<Self, CCacheError> {
-        Ok(SessionKey {
-            session_key_jwe: JweCompact::from_str(session_key_jwe)
-                .map_err(|e| CCacheError::InvalidParse(format!("Failed parsing jwe: {}", e)))?,
+        let session_key_jwe = JweCompact::from_str(session_key_jwe)
+            .map_err(|e| CCacheError::InvalidParse(format!("Failed parsing jwe: {}", e)))?;
+        let session_key = MsOapxbcSessionKey::complete_tpm_rsa_oaep_key_agreement(
             tpm,
             transport_key,
-        })
-    }
-
-    fn decipher(&mut self, data: &[u8]) -> Result<Vec<u8>, CCacheError> {
-        let session_key = MsOapxbcSessionKey::complete_tpm_rsa_oaep_key_agreement(
-            self.tpm,
-            self.transport_key,
-            &self.session_key_jwe,
+            &session_key_jwe,
         )
         .map_err(|e| {
             CCacheError::CryptoFail(format!("Unable to decipher session_key_jwe: {}", e))
         })?;
+        Ok(SessionKey { session_key })
+    }
+
+    fn decipher(&mut self, data: &[u8]) -> Result<Vec<u8>, CCacheError> {
         // TODO: There is no decipher function for plain bytes yet on MsOapxbcSessionKey!
         Err(CCacheError::NotImplemented)
     }
