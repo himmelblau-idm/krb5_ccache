@@ -11,6 +11,7 @@ homepage = "https://github.com/himmelblau-idm/krb5_ccache"
 repository = "https://github.com/himmelblau-idm/krb5_ccache"
 
 [dependencies]
+chrono = "0.4.38"
 compact_jwt = { version = "0.4.1", features = ["msextensions"] }
 kanidm-hsm-crypto = "0.2.0"
 picky-asn1 = "0.8.0"

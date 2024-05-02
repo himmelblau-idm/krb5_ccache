@@ -6,6 +6,8 @@ pub enum CCacheError {
     FormatError(String),
     /// Failed to parse something
     InvalidParse(String),
+    /// Datetime failure
+    DateTime(String),
     /// This functionality is not yet implemented
     NotImplemented,
 }
