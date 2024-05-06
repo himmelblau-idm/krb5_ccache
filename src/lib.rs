@@ -8,6 +8,8 @@ use picky_asn1::wrapper::{GeneralStringAsn1, GeneralizedTimeAsn1, IntegerAsn1};
 use picky_krb::data_types::TicketInner;
 use picky_krb::messages::{AsRep, EncAsRepPart};
 use std::convert::{From, Into, TryFrom};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::str::FromStr;
 
 struct Asn1Int<'a>(&'a IntegerAsn1);
@@ -34,7 +36,7 @@ impl<'a> TryFrom<Asn1Int<'a>> for u32 {
     }
 }
 
-struct SessionKey {
+pub struct SessionKey {
     session_key: MsOapxbcSessionKey,
 }
 
@@ -68,9 +70,28 @@ struct Header {
     tagdata: Vec<u8>,
 }
 
+impl Into<Vec<u8>> for Header {
+    fn into(mut self) -> Vec<u8> {
+        let mut b = self.tag.to_be_bytes().to_vec();
+        let tagdata_len = self.tagdata.len() as u16;
+        b.append(&mut tagdata_len.to_be_bytes().to_vec());
+        b.append(&mut self.tagdata);
+        return b;
+    }
+}
+
 #[derive(Clone)]
 struct CountedOctetString {
     data: Vec<u8>,
+}
+
+impl Into<Vec<u8>> for CountedOctetString {
+    fn into(mut self) -> Vec<u8> {
+        let len = self.data.len() as u32;
+        let mut b = len.to_be_bytes().to_vec();
+        b.append(&mut self.data);
+        return b;
+    }
 }
 
 impl Into<CountedOctetString> for GeneralStringAsn1 {
@@ -106,10 +127,34 @@ struct Principal {
     components: Vec<CountedOctetString>,
 }
 
+impl Into<Vec<u8>> for Principal {
+    fn into(self) -> Vec<u8> {
+        let mut b = self.name_type.to_be_bytes().to_vec();
+        let components_len = self.components.len() as u32;
+        b.append(&mut components_len.to_be_bytes().to_vec());
+        b.append(&mut self.realm.into());
+        for component in self.components.into_iter() {
+            b.append(&mut component.into())
+        }
+        return b;
+    }
+}
+
 struct Keyblock {
     keytype: u16,
     etype: u16,
     keyvalue: Vec<u8>,
+}
+
+impl Into<Vec<u8>> for Keyblock {
+    fn into(self) -> Vec<u8> {
+        let mut b = self.keytype.to_be_bytes().to_vec();
+        b.append(&mut self.etype.to_be_bytes().to_vec());
+        let keylen: u16 = self.keyvalue.len() as u16;
+        b.append(&mut keylen.to_be_bytes().to_vec());
+        b.append(&mut self.keyvalue.clone());
+        return b;
+    }
 }
 
 struct Times {
@@ -117,6 +162,16 @@ struct Times {
     starttime: u32,
     endtime: u32,
     renew_till: u32,
+}
+
+impl Into<Vec<u8>> for Times {
+    fn into(self) -> Vec<u8> {
+        let mut b = self.authtime.to_be_bytes().to_vec();
+        b.append(&mut self.starttime.to_be_bytes().to_vec());
+        b.append(&mut self.endtime.to_be_bytes().to_vec());
+        b.append(&mut self.renew_till.to_be_bytes().to_vec());
+        return b;
+    }
 }
 
 struct Asn1Time(GeneralizedTimeAsn1);
@@ -140,9 +195,25 @@ struct Address {
     addrdata: CountedOctetString,
 }
 
+impl Into<Vec<u8>> for Address {
+    fn into(self) -> Vec<u8> {
+        let mut b = self.addrtype.to_be_bytes().to_vec();
+        b.append(&mut self.addrdata.into());
+        return b;
+    }
+}
+
 struct Authdata {
     authtype: u16,
     authdata: CountedOctetString,
+}
+
+impl Into<Vec<u8>> for Authdata {
+    fn into(self) -> Vec<u8> {
+        let mut b = self.authtype.to_be_bytes().to_vec();
+        b.append(&mut self.authdata.into());
+        return b;
+    }
 }
 
 struct Credential {
@@ -158,16 +229,72 @@ struct Credential {
     second_ticket: CountedOctetString,
 }
 
+impl Into<Vec<u8>> for Credential {
+    fn into(self) -> Vec<u8> {
+        let mut b: Vec<u8> = self.client.into();
+        b.append(&mut self.server.into());
+        b.append(&mut self.key.into());
+        b.append(&mut self.time.into());
+        b.push(self.is_skey);
+        b.append(&mut self.tktflags.to_be_bytes().to_vec());
+        let addrs_len = self.addrs.len() as u32;
+        b.append(&mut addrs_len.to_be_bytes().to_vec());
+        for addr in self.addrs.into_iter() {
+            b.append(&mut addr.into());
+        }
+        let authdata_len = self.authdata.len() as u32;
+        b.append(&mut authdata_len.to_be_bytes().to_vec());
+        for authdata in self.authdata.into_iter() {
+            b.append(&mut authdata.into());
+        }
+        b.append(&mut self.ticket.into());
+        b.append(&mut self.second_ticket.into());
+        return b;
+    }
+}
+
 /// Based on the file format defined in:
 /// https://www.gnu.org/software/shishi/manual/html_node/The-Credential-Cache-Binary-File-Format.html
-struct CCache {
+pub struct CCache {
     file_format_version: u16,
     headers: Vec<Header>,
     primary_principal: Principal,
     credentials: Vec<Credential>,
 }
 
+impl Into<Vec<u8>> for CCache {
+    fn into(self) -> Vec<u8> {
+        let mut b = self.file_format_version.to_be_bytes().to_vec();
+        let headers_len = self.headers.len() as u16;
+        b.append(&mut headers_len.to_be_bytes().to_vec());
+        for header in self.headers.into_iter() {
+            b.append(&mut header.into());
+        }
+        b.append(&mut self.primary_principal.into());
+        for credential in self.credentials.into_iter() {
+            b.append(&mut credential.into());
+        }
+        return b;
+    }
+}
+
 impl CCache {
+    pub fn save_keytab_file(self, filename: &str) -> Result<(), CCacheError> {
+        let bytes: Vec<u8> = self.into();
+        let mut keytab_file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(filename)
+            .map_err(|e| CCacheError::FileOperationFail(format!("{:?}", e)))?;
+        keytab_file.write_all(&bytes)
+            .map_err(|e| CCacheError::FileOperationFail(format!("{:?}", e)))?;
+        keytab_file
+            .sync_all()
+            .map_err(|e| CCacheError::FileOperationFail(format!("{:?}", e)))?;
+        return Ok(());
+    }
+
     pub fn from_tgt(tgt: &[u8], mut session_key: SessionKey) -> Result<CCache, CCacheError> {
         let tgt: AsRep = picky_asn1_der::from_bytes(tgt)
             .map_err(|e| CCacheError::CryptoFail(format!("AsRep decode fail: {:?}", e)))?;

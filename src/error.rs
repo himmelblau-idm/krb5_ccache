@@ -8,6 +8,8 @@ pub enum CCacheError {
     InvalidParse(String),
     /// Datetime failure
     DateTime(String),
+    /// Reading/Writing from/to a file Failed
+    FileOperationFail(String),
     /// This functionality is not yet implemented
     NotImplemented,
 }
